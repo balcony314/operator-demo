@@ -1,16 +1,18 @@
 # 集成测试文档
 
-MemoryGuard Operator 在本地 minikube 上的集成测试方案，含自动化脚本与复用说明。
+MemoryGuard Operator 的集成测试方案，支持本地 minikube 与 CI 中的 kind 两种集群后端，含自动化脚本与复用说明。
 
 ## 测试环境
 
 | 组件 | 版本 |
 |---|---|
-| minikube | K8s v1.30.0 |
+| 集群后端 | minikube（本地默认）或 kind（CI） |
 | cert-manager | v1.16.0（webhook 证书签发） |
 | metrics-server | v0.7.1（PodMetrics 数据源） |
 | Go | 1.26.2 |
 | 构建工具 | Make（Makefile） |
+
+`00-setup.sh` 已参数化，支持 minikube 与 kind 两种后端，默认 minikube 行为不变。详见下文「kind 后端（CI）」。
 
 ## 脚本结构
 
@@ -47,6 +49,43 @@ bash test/integration/99-cleanup.sh
 # 3. 彻底卸载（含 operator）
 bash test/integration/99-cleanup.sh --all
 ```
+
+## kind 后端（CI）
+
+`00-setup.sh` 支持以 kind 替代 minikube 跑完整 6 场景，GitHub Actions 已接入（`.github/workflows/test-integration.yml`）。场景脚本 10-60 与 99 完全集群无关（只用 `kubectl`），无需改动。
+
+### 环境变量
+
+| 变量 | 默认 | 取值 | 说明 |
+|---|---|---|---|
+| `CLUSTER` | `minikube` | `minikube` \| `kind` | 集群后端 |
+| `KIND_CLUSTER` | `kind` | 集群名 | kind 集群名（需先 `kind create cluster`） |
+| `MIRROR` | `auto` | `auto` \| `1` \| `0` | 镜像加速。`auto`=minikube→1/kind→0 |
+
+### 用法
+
+```bash
+# 国外/CI 环境（直连 registry.k8s.io / docker hub，最快）
+kind create cluster --name demo-int
+CLUSTER=kind KIND_CLUSTER=demo-int bash test/integration/00-setup.sh
+bash test/integration/run-all.sh
+kind delete cluster --name demo-int
+
+# 国内本地 kind（强制走国内镜像）
+CLUSTER=kind KIND_CLUSTER=demo-int MIRROR=1 bash test/integration/00-setup.sh
+```
+
+### kind 与 minikube 的实现差异
+
+`00-setup.sh` 按后端分支处理：
+
+- **metrics-server**：minikube 走 `addons enable`；kind apply 官方 `components.yaml`，并**追加 `--kubelet-insecure-tls`**（kind 节点 kubelet 用自签证书，否则 `kubectl top` 取不到数据，场景 2/3/4/5/6 全挂）
+- **镜像加载**：minikube `eval $(minikube docker-env)` 后构建即落位；kind 在宿主机构建后 `kind load docker-image`
+- **busybox 预加载**：两边都拉。场景脚本的 stress Pod 用 `imagePullPolicy: Never`，节点必须有镜像否则 `ErrImageNeverPull`
+
+### CI
+
+`.github/workflows/test-integration.yml`：checkout → setup go → 装 kind → 建集群 → `00-setup.sh`（kind）→ `run-all.sh` → 失败时 dump operator 日志/events → `if: always()` 清理集群。`timeout-minutes: 30`。trigger 与 `test-e2e.yml` 对齐（push master + PR），与脚手架冒烟测试（`test-e2e.yml`）解耦、可并行。
 
 ## 测试场景
 
@@ -138,10 +177,11 @@ Pod 已被标记 -> 删除 MemoryPolicy -> finalizer 触发清理
 
 ### 1. 镜像源（国内无法直连 docker.io / gcr.io）
 
-`00-setup.sh` 自动处理：
-- `golang:1.26`、`gcr.io/distroless/static:nonroot` 经 daocloud 镜像拉取并 retag 为原名
+`00-setup.sh` 自动处理（按 `MIRROR` 决定是否走国内镜像，minikube 默认开、kind 默认关）：
+- `golang:1.26`、`gcr.io/distroless/static:nonroot`、`busybox:latest` 经 daocloud 镜像拉取并 retag 为原名
 - manager 镜像构建传 `GOPROXY=https://goproxy.cn,direct`（Dockerfile 已加 `ARG GOPROXY`）
 - `make docker-build` 支持 `GOPROXY=... make docker-build`
+- kind 后端额外 `kind load docker-image` 把 manager + busybox 灌入节点（见「kind 后端」节）
 
 ### 2. metrics-server 镜像
 
