@@ -53,10 +53,10 @@ func (v *MemoryPolicyCustomValidator) validateMemoryPolicy(obj *memoryv1.MemoryP
 
 	// action 必须是允许的枚举值
 	switch spec.Action {
-	case "add-label", "add-annotation":
+	case memoryv1.ActionAddLabel, memoryv1.ActionAddAnnotation:
 	default:
 		allErrs = append(allErrs, field.NotSupported(
-			field.NewPath("spec", "action"), spec.Action, []string{"add-label", "add-annotation"},
+			field.NewPath("spec", "action"), spec.Action, []string{memoryv1.ActionAddLabel, memoryv1.ActionAddAnnotation},
 		))
 	}
 

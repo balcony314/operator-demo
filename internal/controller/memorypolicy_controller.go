@@ -103,23 +103,17 @@ func (r *MemoryPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 拉取 PodMetrics 并调谐标记（含优雅降级）
-	degraded, reconcileErr := r.reconcilePods(ctx, &policy, podList)
+	degraded := r.reconcilePods(ctx, &policy, podList)
 
 	// 更新 status
-	r.updateStatus(ctx, &policy, degraded, reconcileErr)
-
-	if reconcileErr != nil {
-		r.EventRecorder.Event(&policy, corev1.EventTypeWarning, "ReconcileFailed", reconcileErr.Error())
-		return ctrl.Result{RequeueAfter: requeueInterval}, nil
-	}
+	r.updateStatus(ctx, &policy, degraded, nil)
 
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
 // reconcilePods 拉取 PodMetrics，计算每个 Pod 的内存使用率并加/移标记。
-// 返回 degraded=true 表示 Metrics API 不可用，已降级为 request/limit 估算；
-// 返回 error 非 nil 表示调谐失败。
-func (r *MemoryPolicyReconciler) reconcilePods(ctx context.Context, policy *memoryv1.MemoryPolicy, podList *corev1.PodList) (bool, error) {
+// 返回 degraded=true 表示 Metrics API 不可用，已降级为 request/limit 估算。
+func (r *MemoryPolicyReconciler) reconcilePods(ctx context.Context, policy *memoryv1.MemoryPolicy, podList *corev1.PodList) bool {
 	log := logf.FromContext(ctx)
 
 	// 拉 PodMetrics；失败则降级为 request/limit 估算
@@ -146,124 +140,153 @@ func (r *MemoryPolicyReconciler) reconcilePods(ctx context.Context, policy *memo
 	}
 
 	threshold := int64(policy.Spec.Threshold)
-	markerKey := policy.Spec.Marker.Key
-	markerValue := policy.Spec.Marker.Value
 
 	// 统计当前被该 policy 标记的 Pod 数（用于 Prometheus 指标）
 	markedCount := 0
-
 	for i := range podList.Items {
-		pod := &podList.Items[i]
-		if !pod.DeletionTimestamp.IsZero() {
-			continue
-		}
-
-		// 累加所有容器的 memory.limit 与 memory.request；任一容器缺 limit 则跳过该 Pod
-		var limit, request int64
-		allHaveLimit := true
-		for _, c := range pod.Spec.Containers {
-			if q, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
-				limit += q.Value()
-			} else {
-				allHaveLimit = false
-				break
-			}
-			if q, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
-				request += q.Value()
-			}
-		}
-		if !allHaveLimit || limit == 0 {
-			continue
-		}
-
-		// 计算使用量分子：正常取实际 usage，降级取 request 估算
-		var usage int64
-		hasUsage := false
-		if degraded {
-			// 降级：用 request/limit 估算使用率
-			if request > 0 {
-				usage = request
-				hasUsage = true
-			}
-		} else {
-			// 正常：取 PodMetrics 实际使用
-			if u, ok := usageMap[pod.Name]; ok {
-				usage = u
-				hasUsage = true
-			}
-		}
-		if !hasUsage {
-			continue // 暂无 metrics 且无可估算的 request
-		}
-
-		overload := usage*100 > threshold*limit
-		managed := pod.Annotations[managedByAnnotation] == policy.Name
-
-		// 统计被标记 Pod 数（归属本 policy 且当前仍有 marker）
-		if managed {
-			if policy.Spec.Action == "add-label" {
-				if _, ok := pod.Labels[markerKey]; ok {
-					markedCount++
-				}
-			} else if _, ok := pod.Annotations[markerKey]; ok {
-				markedCount++
-			}
-		}
-
-		switch policy.Spec.Action {
-		case "add-label":
-			_, hasMarker := pod.Labels[markerKey]
-			if overload && !hasMarker {
-				ensureMapLabels(pod)
-				pod.Labels[markerKey] = markerValue
-				ensureMapAnnotations(pod)
-				pod.Annotations[managedByAnnotation] = policy.Name
-				if err := r.Update(ctx, pod); err != nil {
-					log.Error(err, "failed to add label to Pod", "pod", pod.Name)
-					continue
-				}
-				r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerAdded",
-					"memory usage %d%% exceeds threshold %d%%, added label %s=%s", usage*100/limit, threshold, markerKey, markerValue)
-			} else if !overload && hasMarker && managed {
-				delete(pod.Labels, markerKey)
-				delete(pod.Annotations, managedByAnnotation)
-				if err := r.Update(ctx, pod); err != nil {
-					log.Error(err, "failed to remove label from Pod", "pod", pod.Name)
-					continue
-				}
-				r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerRemoved",
-					"memory usage recovered, removed label %s", markerKey)
-			}
-		case "add-annotation":
-			_, hasMarker := pod.Annotations[markerKey]
-			if overload && !hasMarker {
-				ensureMapAnnotations(pod)
-				pod.Annotations[markerKey] = markerValue
-				pod.Annotations[managedByAnnotation] = policy.Name
-				if err := r.Update(ctx, pod); err != nil {
-					log.Error(err, "failed to add annotation to Pod", "pod", pod.Name)
-					continue
-				}
-				r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerAdded",
-					"memory usage %d%% exceeds threshold %d%%, added annotation %s=%s", usage*100/limit, threshold, markerKey, markerValue)
-			} else if !overload && hasMarker && managed {
-				delete(pod.Annotations, markerKey)
-				delete(pod.Annotations, managedByAnnotation)
-				if err := r.Update(ctx, pod); err != nil {
-					log.Error(err, "failed to remove annotation from Pod", "pod", pod.Name)
-					continue
-				}
-				r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerRemoved",
-					"memory recovered, removed annotation %s", markerKey)
-			}
-		}
+		markedCount += r.reconcilePod(ctx, policy, &podList.Items[i], usageMap, degraded, threshold)
 	}
 
 	// 更新 Prometheus 指标：当前被该 policy 标记的 Pod 数
 	if r.Metrics != nil {
 		r.Metrics.MarkedPods.WithLabelValues(policy.Name, policy.Spec.Namespace).Set(float64(markedCount))
 	}
-	return degraded, nil
+	return degraded
+}
+
+// reconcilePod 处理单个 Pod：计算内存使用率并加/移 marker。
+// 返回 1 表示该 Pod 当前被本 policy 标记（计入 markedCount），否则 0。
+func (r *MemoryPolicyReconciler) reconcilePod(
+	ctx context.Context,
+	policy *memoryv1.MemoryPolicy,
+	pod *corev1.Pod,
+	usageMap map[string]int64,
+	degraded bool,
+	threshold int64,
+) int {
+	if !pod.DeletionTimestamp.IsZero() {
+		return 0
+	}
+
+	usage, limit, ok := computePodUsage(pod, usageMap, degraded)
+	if !ok {
+		return 0 // 缺 limit 或暂无可估算的 usage
+	}
+
+	markerKey := policy.Spec.Marker.Key
+	markerValue := policy.Spec.Marker.Value
+	overload := usage*100 > threshold*limit
+	managed := pod.Annotations[managedByAnnotation] == policy.Name
+
+	marked := r.applyMarker(ctx, policy, pod, overload, managed, usage, limit, threshold, markerKey, markerValue)
+
+	// 统计被标记 Pod 数（归属本 policy 且当前仍有 marker）
+	if marked && managed {
+		return 1
+	}
+	return 0
+}
+
+// applyMarker 按 policy.Spec.Action 加/移 marker（label 或 annotation），返回当前 Pod 是否仍持有 marker。
+func (r *MemoryPolicyReconciler) applyMarker(
+	ctx context.Context,
+	policy *memoryv1.MemoryPolicy,
+	pod *corev1.Pod,
+	overload, managed bool,
+	usage, limit, threshold int64,
+	markerKey, markerValue string,
+) bool {
+	log := logf.FromContext(ctx)
+
+	switch policy.Spec.Action {
+	case memoryv1.ActionAddLabel:
+		_, hasMarker := pod.Labels[markerKey]
+		if overload && !hasMarker {
+			ensureMapLabels(pod)
+			pod.Labels[markerKey] = markerValue
+			ensureMapAnnotations(pod)
+			pod.Annotations[managedByAnnotation] = policy.Name
+			if err := r.Update(ctx, pod); err != nil {
+				log.Error(err, "failed to add label to Pod", "pod", pod.Name)
+				return hasMarker
+			}
+			r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerAdded",
+				"memory usage %d%% exceeds threshold %d%%, added label %s=%s", usage*100/limit, threshold, markerKey, markerValue)
+			return true
+		} else if !overload && hasMarker && managed {
+			delete(pod.Labels, markerKey)
+			delete(pod.Annotations, managedByAnnotation)
+			if err := r.Update(ctx, pod); err != nil {
+				log.Error(err, "failed to remove label from Pod", "pod", pod.Name)
+				return hasMarker
+			}
+			r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerRemoved",
+				"memory usage recovered, removed label %s", markerKey)
+			return false
+		}
+		return hasMarker
+	case memoryv1.ActionAddAnnotation:
+		_, hasMarker := pod.Annotations[markerKey]
+		if overload && !hasMarker {
+			ensureMapAnnotations(pod)
+			pod.Annotations[markerKey] = markerValue
+			pod.Annotations[managedByAnnotation] = policy.Name
+			if err := r.Update(ctx, pod); err != nil {
+				log.Error(err, "failed to add annotation to Pod", "pod", pod.Name)
+				return hasMarker
+			}
+			r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerAdded",
+				"memory usage %d%% exceeds threshold %d%%, added annotation %s=%s", usage*100/limit, threshold, markerKey, markerValue)
+			return true
+		} else if !overload && hasMarker && managed {
+			delete(pod.Annotations, markerKey)
+			delete(pod.Annotations, managedByAnnotation)
+			if err := r.Update(ctx, pod); err != nil {
+				log.Error(err, "failed to remove annotation from Pod", "pod", pod.Name)
+				return hasMarker
+			}
+			r.EventRecorder.Eventf(pod, corev1.EventTypeNormal, "MarkerRemoved",
+				"memory recovered, removed annotation %s", markerKey)
+			return false
+		}
+		return hasMarker
+	}
+	return false
+}
+
+// computePodUsage 计算 Pod 的内存使用量 usage 与 limit。
+// ok=false 表示该 Pod 不可调谐（删除中、缺 limit 或暂无可估算的 usage）。
+func computePodUsage(pod *corev1.Pod, usageMap map[string]int64, degraded bool) (usage, limit int64, ok bool) {
+	// 累加所有容器的 memory.limit 与 memory.request；任一容器缺 limit 则跳过该 Pod
+	var request int64
+	allHaveLimit := true
+	for _, c := range pod.Spec.Containers {
+		if q, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
+			limit += q.Value()
+		} else {
+			allHaveLimit = false
+			break
+		}
+		if q, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+			request += q.Value()
+		}
+	}
+	if !allHaveLimit || limit == 0 {
+		return 0, 0, false
+	}
+
+	if degraded {
+		// 降级：用 request/limit 估算使用率
+		if request > 0 {
+			return request, limit, true
+		}
+		return 0, 0, false
+	}
+	// 正常：取 PodMetrics 实际使用
+	if u, ok := usageMap[pod.Name]; ok {
+		return u, limit, true
+	}
+	return 0, 0, false // 暂无 metrics 且无可估算的 request
 }
 
 // cleanupPolicyMarkers 删除 MemoryPolicy 时，移除其添加的所有标记（label/annotation + 归属 annotation）。
@@ -286,7 +309,7 @@ func (r *MemoryPolicyReconciler) cleanupPolicyMarkers(ctx context.Context, polic
 			continue
 		}
 		changed := false
-		if policy.Spec.Action == "add-label" {
+		if policy.Spec.Action == memoryv1.ActionAddLabel {
 			if _, ok := pod.Labels[markerKey]; ok {
 				delete(pod.Labels, markerKey)
 				changed = true

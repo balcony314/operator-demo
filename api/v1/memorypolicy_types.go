@@ -11,6 +11,14 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// Action 枚举值：Spec.Action 只允许取以下二者之一（与 +kubebuilder:validation:Enum 对应）。
+const (
+	// ActionAddLabel 表示超阈值时添加 label
+	ActionAddLabel = "add-label"
+	// ActionAddAnnotation 表示超阈值时添加 annotation
+	ActionAddAnnotation = "add-annotation"
+)
+
 // MemoryPolicySpec defines the desired state of MemoryPolicy
 type MemoryPolicySpec struct {
 	// Important: Run "make" to regenerate code after modifying this file

@@ -178,7 +178,7 @@ func main() {
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		MetricsClient: metricsClient,
-		EventRecorder: mgr.GetEventRecorderFor("memorypolicy"),
+		EventRecorder: mgr.GetEventRecorderFor("memorypolicy"), //nolint:staticcheck // 待升级依赖后切换至 GetEventRecorder
 		Metrics:       controller.NewMemoryGuardMetrics(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "memorypolicy")
