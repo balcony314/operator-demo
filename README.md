@@ -240,4 +240,4 @@ make undeploy                       # 卸载 controller
 
 ## License
 
-详见 [LICENSE](LICENSE)。
+详见 [LICENSE](LICENSE)
