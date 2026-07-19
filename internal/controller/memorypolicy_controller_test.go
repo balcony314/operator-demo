@@ -41,7 +41,14 @@ var _ = Describe("MemoryPolicy Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: memoryv1.MemoryPolicySpec{
+						Threshold: 80,
+						Action:    "add-label",
+						Marker: memoryv1.Marker{
+							Key:   "memory.example.com/over-threshold",
+							Value: "true",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
