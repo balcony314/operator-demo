@@ -2,9 +2,24 @@ name: Tests
 
 on:
   push:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
 
 permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -23,7 +38,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Running Tests
+      - name: Tidy modules
+        run: go mod tidy
+
+      - name: Verify go.mod is tidy
         run: |
-          go mod tidy
-          make test
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::go.mod/go.sum is not tidy. Run 'go mod tidy' and commit the result."
+            exit 1
+          fi
+
+      - name: Running Tests
+        run: make test

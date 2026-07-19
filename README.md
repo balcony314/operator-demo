@@ -91,24 +91,6 @@ spec:
 - minikube（本地测试）
 - make
 
-### 部署
-
-```sh
-# 构建并推送镜像（IMG 自行替换为你的 registry）
-make docker-build docker-push IMG=<some-registry>/operator-demo:tag
-
-# 安装 CRD
-make install
-
-# 部署 operator（webhook 需 cert-manager 签发证书）
-make deploy IMG=<some-registry>/operator-demo:tag
-
-# 创建示例 MemoryPolicy
-kubectl apply -k config/samples/
-```
-
-> **注意**：validating webhook 依赖 cert-manager 签发 serving 证书。若集群未安装 cert-manager，CR 创建会因 caBundle 为空而被拒。安装方式见 [cert-manager 文档](https://cert-manager.io/docs/installation/)。
-
 ### 集成测试（minikube）
 
 ```sh
@@ -137,6 +119,24 @@ bash test/integration/99-cleanup.sh --all
 | 4 add-annotation | 标记以 annotation 形式加 |
 | 5 Prometheus 指标 | `memoryguard_marked_pods{policy,namespace}` |
 | 6 优雅降级 | Metrics API 不可用时 request/limit 估算 + status Degraded |
+
+### 部署
+
+```sh
+# 构建并推送镜像（IMG 自行替换为你的 registry）
+make docker-build docker-push IMG=<some-registry>/operator-demo:tag
+
+# 安装 CRD
+make install
+
+# 部署 operator（webhook 需 cert-manager 签发证书）
+make deploy IMG=<some-registry>/operator-demo:tag
+
+# 创建示例 MemoryPolicy
+kubectl apply -k config/samples/
+```
+
+> **注意**：validating webhook 依赖 cert-manager 签发 serving 证书。若集群未安装 cert-manager，CR 创建会因 caBundle 为空而被拒。安装方式见 [cert-manager 文档](https://cert-manager.io/docs/installation/)。
 
 ### 手动 stress 验证（阶段三）
 

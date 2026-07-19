@@ -2,9 +2,24 @@ name: E2E Tests
 
 on:
   push:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
 
 permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-e2e:
@@ -23,6 +38,16 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Tidy modules
+        run: go mod tidy
+
+      - name: Verify go.mod is tidy
+        run: |
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::go.mod/go.sum is not tidy. Run 'go mod tidy' and commit the result."
+            exit 1
+          fi
+
       - name: Install the latest version of kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
@@ -33,6 +58,4 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+        run: make test-e2e

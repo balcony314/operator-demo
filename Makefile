@@ -45,35 +45,35 @@ SHELL := /usr/bin/env bash
 # ============================================================
 
 .PHONY: all
-all: build ## Build manager binary
+all: build ## 构建 manager 二进制文件
 
 # ============================================================
 # 开发
 # ============================================================
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CRD manifests
+manifests: controller-gen ## 生成 WebhookConfiguration、ClusterRole 与 CRD 清单
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: controller-gen ## Generate DeepCopy methods
+generate: controller-gen ## 生成 DeepCopy 方法
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt",year=$(YEAR) paths="./..."
 
 .PHONY: fmt
-fmt: ## Run go fmt
+fmt: ## 执行 go fmt
 	go fmt ./...
 
 .PHONY: vet
-vet: generate ## Run go vet
+vet: generate ## 执行 go vet
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run unit tests (envtest)
+test: manifests generate fmt vet setup-envtest ## 运行单元测试（基于 envtest）
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 	    go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Create kind cluster for e2e tests if it does not exist
+setup-test-e2e: ## 若 e2e 测试用的 kind 集群不存在则创建
 	@command -v $(KIND) >/dev/null 2>&1 || { echo "Kind is not installed. Please install Kind manually."; exit 1; }
 	@case "$$($(KIND) get clusters)" in \
 	    *"$(KIND_CLUSTER)"*) echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
@@ -81,36 +81,36 @@ setup-test-e2e: ## Create kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests in isolated kind environment
+test-e2e: setup-test-e2e manifests generate fmt vet ## 在隔离的 kind 环境中运行 e2e 测试
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Destroy the kind cluster used for e2e tests
+cleanup-test-e2e: ## 销毁 e2e 测试使用的 kind 集群
 	$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: integration-setup
-integration-setup: ## Integration test env setup (minikube + cert-manager + metrics-server + operator)
+integration-setup: ## 集成测试环境准备（minikube + cert-manager + metrics-server + operator）
 	bash test/integration/00-setup.sh
 
 .PHONY: integration-test
-integration-test: ## Run all integration test scenarios (prereq: make integration-setup)
+integration-test: ## 运行全部集成测试场景（前置：make integration-setup）
 	bash test/integration/run-all.sh
 
 .PHONY: integration-cleanup
-integration-cleanup: ## Clean up integration test resources (--all also undeploys operator)
+integration-cleanup: ## 清理集成测试资源（--all 同时卸载 operator）
 	bash test/integration/99-cleanup.sh $(ARGS)
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint
+lint: golangci-lint ## 运行 golangci-lint
 	"$(GOLANGCI_LINT)" run
 
 .PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint and auto-fix
+lint-fix: golangci-lint ## 运行 golangci-lint 并自动修复
 	"$(GOLANGCI_LINT)" run --fix
 
 .PHONY: lint-config
-lint-config: golangci-lint ## Verify golangci-lint config
+lint-config: golangci-lint ## 校验 golangci-lint 配置
 	"$(GOLANGCI_LINT)" config verify
 
 # ============================================================
@@ -118,23 +118,23 @@ lint-config: golangci-lint ## Verify golangci-lint config
 # ============================================================
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary
+build: manifests generate fmt vet ## 构建 manager 二进制文件
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run controller locally
+run: manifests generate fmt vet ## 本地运行 controller
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: ## Build manager docker image (e.g. GOPROXY=https://goproxy.cn,direct make docker-build)
+docker-build: ## 构建 manager docker 镜像（如 GOPROXY=https://goproxy.cn,direct make docker-build）
 	$(CONTAINER_TOOL) build --build-arg GOPROXY=$(GOPROXY) -t $(IMG) .
 
 .PHONY: docker-push
-docker-push: ## Push manager docker image
+docker-push: ## 推送 manager docker 镜像
 	$(CONTAINER_TOOL) push $(IMG)
 
 .PHONY: docker-buildx
-docker-buildx: ## Build and push manager image for multiple platforms
+docker-buildx: ## 构建并推送多平台 manager 镜像
 	sed -e '1 s/\(^FROM\)/FROM --platform=$${BUILDPLATFORM}/; t' -e ' 1,// s//FROM --platform=$${BUILDPLATFORM}/' Dockerfile > Dockerfile.cross
 	-$(CONTAINER_TOOL) buildx create --name operator-demo-builder
 	$(CONTAINER_TOOL) buildx use operator-demo-builder
@@ -143,7 +143,7 @@ docker-buildx: ## Build and push manager image for multiple platforms
 	rm -f Dockerfile.cross
 
 .PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a combined YAML with CRDs and deployment
+build-installer: manifests generate kustomize ## 生成包含 CRD 与部署的合并 YAML
 	mkdir -p dist
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
 	$(KUSTOMIZE) build config/default > dist/install.yaml
@@ -153,13 +153,13 @@ build-installer: manifests generate kustomize ## Generate a combined YAML with C
 # ============================================================
 
 .PHONY: install
-install: manifests kustomize ## Install CRDs into the cluster
+install: manifests kustomize ## 将 CRD 安装到集群
 	@out="$$($(KUSTOMIZE) build config/crd 2>/dev/null || true)"; \
 	if [ -n "$$out" ]; then echo "$$out" | $(KUBECTL) apply -f -; \
 	else echo "No CRDs to install; skipping."; fi
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs (cleans MemoryPolicy CRs first to avoid finalizer deadlock)
+uninstall: manifests kustomize ## 卸载 CRD（先清理 MemoryPolicy CR 以避免 finalizer 死锁）
 	@echo "Cleaning up MemoryPolicy CR instances (if any) to avoid finalizer deadlock..."
 	$(KUBECTL) delete memorypolicy.memory.example.com -A --all --ignore-not-found=$(IGNORE_NOT_FOUND) 2>/dev/null || true
 	@out="$$($(KUSTOMIZE) build config/crd 2>/dev/null || true)"; \
@@ -167,16 +167,16 @@ uninstall: manifests kustomize ## Uninstall CRDs (cleans MemoryPolicy CRs first 
 	else echo "No CRDs to delete; skipping."; fi
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the cluster
+deploy: manifests kustomize ## 部署 controller 到集群
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
 	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the cluster
+undeploy: kustomize ## 从集群卸载 controller
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(IGNORE_NOT_FOUND) -f -
 
 .PHONY: uninstall-all
-uninstall-all: ## Full uninstall: undeploy + uninstall + delete namespace
+uninstall-all: ## 彻底卸载：undeploy + uninstall + 删除命名空间
 	$(MAKE) undeploy
 	$(MAKE) uninstall
 	$(KUBECTL) delete namespace operator-demo-system --ignore-not-found=$(IGNORE_NOT_FOUND)
@@ -186,33 +186,33 @@ uninstall-all: ## Full uninstall: undeploy + uninstall + delete namespace
 # ============================================================
 
 .PHONY: controller-gen
-controller-gen: ## Download controller-gen locally if necessary
+controller-gen: ## 按需在本地下载 controller-gen
 	@test -s $(CONTROLLER_GEN) || { \
 	    echo "Downloading controller-gen@$(CONTROLLER_TOOLS_VERSION)"; \
 	    GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION); \
 	}
 
 .PHONY: kustomize
-kustomize: ## Download kustomize locally if necessary
+kustomize: ## 按需在本地下载 kustomize
 	@test -s $(KUSTOMIZE) || { \
 	    echo "Downloading kustomize@$(KUSTOMIZE_VERSION)"; \
 	    GOBIN=$(LOCALBIN) go install sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION); \
 	}
 
 .PHONY: envtest
-envtest: ## Download setup-envtest locally if necessary
+envtest: ## 按需在本地下载 setup-envtest
 	@test -s $(ENVTEST) || { \
 	    echo "Downloading setup-envtest@$(ENVTEST_VERSION)"; \
 	    GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION); \
 	}
 
 .PHONY: setup-envtest
-setup-envtest: envtest ## Set up envtest binaries for the configured Kubernetes version
+setup-envtest: envtest ## 为配置的 Kubernetes 版本准备 envtest 二进制
 	@echo "Setting up envtest binaries for Kubernetes version $(ENVTEST_K8S_VERSION)..."
 	"$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path
 
 .PHONY: golangci-lint
-golangci-lint: ## Download golangci-lint locally if necessary
+golangci-lint: ## 按需在本地下载 golangci-lint
 	@test -s $(GOLANGCI_LINT) || { \
 	    echo "Downloading golangci-lint@$(GOLANGCI_LINT_VERSION)"; \
 	    GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
@@ -228,6 +228,6 @@ golangci-lint: ## Download golangci-lint locally if necessary
 # ============================================================
 
 .PHONY: help
-help: ## Display this help
+help: ## 显示本帮助
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make <target> [VAR=value]\n\nTargets:\n"} \
 	/^[a-zA-Z_0-9-]+:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
